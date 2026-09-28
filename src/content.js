@@ -212,12 +212,30 @@
         return;
       }
 
+      showBadge("READING", "Re-reading recent conversation…");
+
+      const freshConversation = await readStableConversation(conversation.chatName);
+      const contextConversation =
+        freshConversation && freshConversation.chatName === conversation.chatName
+          ? freshConversation
+          : conversation;
+
+      const contextLimit = Math.max(
+        3,
+        Math.min(30, Number(state.settings.maxConversationMessages) || 12)
+      );
+
+      const contextMessages = contextConversation.messages.slice(-contextLimit);
+
+      showBadge(
+        "THINKING",
+        `Using the last ${contextMessages.length} message${contextMessages.length === 1 ? "" : "s"}…`
+      );
+
       const response = await chrome.runtime.sendMessage({
         type: "GENERATE_REPLY",
-        chatName: conversation.chatName,
-        messages: conversation.messages.slice(
-          -Math.max(2, Number(state.settings.maxConversationMessages) || 12)
-        )
+        chatName: contextConversation.chatName,
+        messages: contextMessages
       });
 
       if (!response?.ok) throw new Error(response?.error || "Reply generation failed.");
@@ -239,7 +257,17 @@
         state.lastReplyAtByChat.set(conversation.chatName, Date.now());
       }
 
-      state.lastProcessedByChat.set(conversation.chatName, key);
+      const processedConversation = readConversation();
+      const processedLatest =
+        processedConversation?.chatName === conversation.chatName
+          ? processedConversation.latestInbound
+          : contextConversation.latestInbound;
+
+      const processedKey = processedLatest
+        ? messageKey(conversation.chatName, processedLatest)
+        : key;
+
+      state.lastProcessedByChat.set(conversation.chatName, processedKey);
 
       showBadge(
         shouldSend ? "SENT" : "DRAFTED",
@@ -261,6 +289,36 @@
       state.processing = false;
       setTimeout(updateBadge, 3500);
     }
+  }
+
+  async function readStableConversation(expectedChatName) {
+    let lastSignature = "";
+    let stablePasses = 0;
+    let latest = null;
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await sleep(attempt === 0 ? 250 : 180);
+
+      const current = readConversation();
+      if (!current || current.chatName !== expectedChatName) return latest;
+
+      latest = current;
+
+      const tail = current.messages.slice(-6);
+      const signature = tail
+        .map((message) => `${message.direction}:${message.id || simpleHash(message.text)}`)
+        .join("|");
+
+      if (signature === lastSignature) {
+        stablePasses += 1;
+        if (stablePasses >= 2) return current;
+      } else {
+        stablePasses = 0;
+        lastSignature = signature;
+      }
+    }
+
+    return latest;
   }
 
   function getChatName() {
