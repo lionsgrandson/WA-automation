@@ -4,22 +4,22 @@
     processing: false,
     activeChatName: "",
     pendingUnreadOpen: false,
+    initializedChats: new Set(),
     lastProcessedByChat: new Map(),
     lastReplyAtByChat: new Map(),
-    timer: null
+    timer: null,
+    badge: null
   };
 
-  const UNREAD_SELECTORS = [
-    '[data-testid="icon-unread-count"]',
-    '[data-testid="unread-count"]',
-    '[aria-label*="unread message" i]',
-    '[aria-label*="unread messages" i]'
-  ];
-
-  start();
+  start().catch((error) => {
+    console.error("[WA Automation] startup failed:", error);
+    showBadge("ERROR", error?.message || String(error), true);
+  });
 
   async function start() {
     state.settings = await loadSettings();
+    installBadge();
+    updateBadge();
 
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
@@ -27,52 +27,67 @@
       for (const [key, change] of Object.entries(changes)) {
         state.settings[key] = change.newValue;
       }
+      updateBadge();
+      scheduleTick(50);
     });
 
-    seedCurrentChat();
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.type === "WA_STATUS") {
+        const conversation = readConversation();
+        sendResponse({
+          ok: true,
+          enabled: Boolean(state.settings?.enabled),
+          processing: state.processing,
+          chatName: conversation?.chatName || "",
+          messageCount: conversation?.messages?.length || 0
+        });
+      }
+    });
 
-    const observer = new MutationObserver(() => scheduleTick(350));
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    const observer = new MutationObserver(() => scheduleTick(250));
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
 
-    state.timer = setInterval(tick, 2500);
-    scheduleTick(1000);
+    state.timer = setInterval(tick, 1800);
+    scheduleTick(800);
     log("ready", "WA Automation content script loaded.");
+    console.info("[WA Automation] content script connected.");
   }
 
   async function loadSettings() {
     const response = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
+    if (!response?.ok && response?.error) throw new Error(response.error);
     return response?.settings || {};
-  }
-
-  function seedCurrentChat() {
-    const conversation = readConversation();
-    if (!conversation) return;
-
-    state.activeChatName = conversation.chatName;
-    if (conversation.latestInbound) {
-      state.lastProcessedByChat.set(
-        conversation.chatName,
-        messageKey(conversation.chatName, conversation.latestInbound)
-      );
-    }
   }
 
   function scheduleTick(delay) {
     clearTimeout(scheduleTick.pending);
-    scheduleTick.pending = setTimeout(tick, delay);
+    scheduleTick.pending = setTimeout(() => {
+      tick().catch((error) => {
+        console.error("[WA Automation] tick failed:", error);
+        showBadge("ERROR", error?.message || String(error), true);
+      });
+    }, delay);
   }
 
   async function tick() {
-    if (state.processing || !state.settings?.enabled) return;
-    if (!document.querySelector("header")) return;
+    if (state.processing) return;
+
+    updateBadge();
+
+    if (!state.settings?.enabled) return;
 
     const conversation = readConversation();
 
     if (conversation) {
       const chatChanged = conversation.chatName !== state.activeChatName;
+      state.activeChatName = conversation.chatName;
 
-      if (chatChanged) {
-        state.activeChatName = conversation.chatName;
+      if (!state.initializedChats.has(conversation.chatName)) {
+        state.initializedChats.add(conversation.chatName);
 
         if (!state.pendingUnreadOpen) {
           if (conversation.latestInbound) {
@@ -81,9 +96,10 @@
               messageKey(conversation.chatName, conversation.latestInbound)
             );
           }
-          return;
         }
+      }
 
+      if (chatChanged && state.pendingUnreadOpen) {
         state.pendingUnreadOpen = false;
       }
 
@@ -99,8 +115,10 @@
     const unreadRow = findUnreadChatRow();
     if (unreadRow) {
       state.pendingUnreadOpen = true;
-      unreadRow.click();
-      await sleep(900);
+      clickChatRow(unreadRow);
+      showBadge("OPENING", "Opening unread chat…");
+      await sleep(700);
+      scheduleTick(100);
     }
   }
 
@@ -108,7 +126,7 @@
     const chatName = getChatName();
     if (!chatName) return null;
 
-    if (state.settings.skipGroups && looksLikeGroupChat()) {
+    if (state.settings?.skipGroups && looksLikeGroupChat()) {
       return { chatName, latestInbound: null, messages: [], isActionable: false };
     }
 
@@ -116,14 +134,19 @@
     if (!messageNodes.length) return null;
 
     const messages = [];
-    for (const node of messageNodes.slice(-30)) {
+    for (const node of messageNodes.slice(-40)) {
       const direction = getDirection(node);
       const text = getMessageText(node);
       if (!direction || !text) continue;
+
       messages.push({
         direction,
         text,
-        id: node.getAttribute("data-id") || node.querySelector("[data-id]")?.getAttribute("data-id") || ""
+        id:
+          node.getAttribute?.("data-id") ||
+          node.querySelector?.("[data-id]")?.getAttribute("data-id") ||
+          node.closest?.("[data-id]")?.getAttribute("data-id") ||
+          ""
       });
     }
 
@@ -143,19 +166,27 @@
   async function processConversation(conversation, key) {
     state.processing = true;
     state.lastProcessedByChat.set(conversation.chatName, key);
+    showBadge("THINKING", `Replying to ${conversation.chatName}…`);
 
     try {
       const lastReplyAt = state.lastReplyAtByChat.get(conversation.chatName) || 0;
       const minimumMs = Math.max(5, Number(state.settings.minReplyIntervalSec) || 20) * 1000;
-      if (Date.now() - lastReplyAt < minimumMs) return;
+
+      if (Date.now() - lastReplyAt < minimumMs) {
+        showBadge("COOLDOWN", "Waiting before another reply");
+        return;
+      }
 
       const response = await chrome.runtime.sendMessage({
         type: "GENERATE_REPLY",
         chatName: conversation.chatName,
-        messages: conversation.messages.slice(-Math.max(2, Number(state.settings.maxConversationMessages) || 12))
+        messages: conversation.messages.slice(
+          -Math.max(2, Number(state.settings.maxConversationMessages) || 12)
+        )
       });
 
       if (!response?.ok) throw new Error(response?.error || "Reply generation failed.");
+
       const result = response.result;
       if (!result?.reply) throw new Error("Gemini returned an empty reply.");
 
@@ -163,12 +194,18 @@
       if (!inserted) throw new Error("Could not find the WhatsApp message composer.");
 
       const shouldSend = Boolean(state.settings.autoSend) && !result.needsHuman;
+
       if (shouldSend) {
         await sleep(500 + Math.floor(Math.random() * 900));
         const sent = clickSend();
         if (!sent) throw new Error("Draft inserted, but the send button was not found.");
         state.lastReplyAtByChat.set(conversation.chatName, Date.now());
       }
+
+      showBadge(
+        shouldSend ? "SENT" : "DRAFTED",
+        result.needsHuman ? "Draft needs human review" : shouldSend ? "Reply sent" : "Reply drafted"
+      );
 
       log(
         shouldSend ? "sent" : "drafted",
@@ -178,29 +215,40 @@
         { model: result.model, confidence: result.confidence, reason: result.reason }
       );
     } catch (error) {
+      console.error("[WA Automation]", error);
+      showBadge("ERROR", error?.message || String(error), true);
       log("error", error?.message || String(error));
     } finally {
       state.processing = false;
+      setTimeout(updateBadge, 3500);
     }
   }
 
   function getChatName() {
+    const main = document.querySelector("#main") || document.querySelector('[role="main"]') || document.body;
     const selectors = [
       'header [data-testid="conversation-info-header-chat-title"]',
-      "header span[title]",
-      "header [title]"
+      'header span[title]',
+      'header [title]',
+      '[data-testid="conversation-header"] span[title]'
     ];
+
     for (const selector of selectors) {
-      const element = document.querySelector(selector);
-      const value = element?.getAttribute("title") || element?.textContent;
-      if (value?.trim()) return value.trim();
+      const elements = [...main.querySelectorAll(selector)].filter(isVisible);
+      for (const element of elements) {
+        const value = element.getAttribute("title") || element.textContent;
+        if (value?.trim()) return value.trim();
+      }
     }
+
     return "";
   }
 
   function looksLikeGroupChat() {
-    const header = document.querySelector("header");
+    const main = document.querySelector("#main") || document.querySelector('[role="main"]');
+    const header = main?.querySelector("header");
     if (!header) return false;
+
     if (header.querySelector('[data-testid*="group"], [data-icon*="group"]')) return true;
 
     const secondary = [...header.querySelectorAll("span")]
@@ -212,48 +260,99 @@
   }
 
   function getMessageNodes() {
-    const primary = [...document.querySelectorAll(".message-in, .message-out")];
+    const main = document.querySelector("#main") || document.querySelector('[role="main"]') || document;
+
+    const primary = [...main.querySelectorAll(".message-in, .message-out")];
     if (primary.length) return primary;
 
-    return [...document.querySelectorAll('[data-testid="msg-container"]')];
+    const containers = [...main.querySelectorAll('[data-testid="msg-container"]')];
+    if (containers.length) return containers;
+
+    return [...main.querySelectorAll('[data-id]')].filter((node) => {
+      return (
+        node.querySelector?.(".selectable-text") ||
+        node.querySelector?.('[data-testid="msg-text"]')
+      );
+    });
   }
 
   function getDirection(node) {
     if (node.classList?.contains("message-in") || node.closest?.(".message-in")) return "in";
     if (node.classList?.contains("message-out") || node.closest?.(".message-out")) return "out";
 
-    const dataId = node.getAttribute?.("data-id") || node.closest?.("[data-id]")?.getAttribute("data-id") || "";
+    const dataId =
+      node.getAttribute?.("data-id") ||
+      node.closest?.("[data-id]")?.getAttribute("data-id") ||
+      "";
+
     if (dataId.includes("true_")) return "out";
     if (dataId.includes("false_")) return "in";
+
+    const copyable = node.querySelector?.("[data-pre-plain-text]") || node.closest?.("[data-pre-plain-text]");
+    const pre = copyable?.getAttribute?.("data-pre-plain-text") || "";
+
+    if (/\byou\b/i.test(pre)) return "out";
     return null;
   }
 
   function getMessageText(node) {
-    const preferred = node.querySelector?.(".selectable-text, [data-testid='msg-text']");
+    const preferred =
+      node.matches?.(".selectable-text, [data-testid='msg-text']")
+        ? node
+        : node.querySelector?.(".selectable-text, [data-testid='msg-text']");
+
     let text = preferred?.innerText || preferred?.textContent || "";
 
     if (!text.trim()) {
       const copyable = node.querySelector?.("[data-pre-plain-text]");
-      text = copyable?.innerText || "";
+      text = copyable?.innerText || copyable?.textContent || "";
     }
 
     return text.replace(/\s+/g, " ").trim();
   }
 
   function findUnreadChatRow() {
-    for (const selector of UNREAD_SELECTORS) {
-      const badges = document.querySelectorAll(selector);
-      for (const badge of badges) {
-        const row = ascendToChatRow(badge);
+    const pane = document.querySelector("#pane-side") || document.querySelector('[aria-label*="chat list" i]');
+    if (!pane) return null;
+
+    const selectors = [
+      '[data-testid*="unread"]',
+      '[data-icon*="unread"]',
+      '[aria-label*="unread" i]'
+    ];
+
+    for (const selector of selectors) {
+      const markers = [...pane.querySelectorAll(selector)];
+      for (const marker of markers) {
+        const row = ascendToChatRow(marker, pane);
         if (row && isVisible(row)) return row;
       }
     }
+
+    const rows = [...pane.querySelectorAll('[role="listitem"], [role="row"], [tabindex="0"]')];
+    for (const row of rows) {
+      const text = [
+        row.getAttribute("aria-label") || "",
+        row.textContent || ""
+      ].join(" ");
+
+      if (/\bunread\b/i.test(text) && isVisible(row)) return row;
+
+      const badge = [...row.querySelectorAll("span, div")].find((el) => {
+        const value = (el.getAttribute("aria-label") || "").trim();
+        return /unread/i.test(value);
+      });
+
+      if (badge && isVisible(row)) return row;
+    }
+
     return null;
   }
 
-  function ascendToChatRow(element) {
+  function ascendToChatRow(element, pane) {
     let current = element;
-    for (let i = 0; current && i < 9; i += 1, current = current.parentElement) {
+
+    for (let i = 0; current && current !== pane && i < 12; i += 1, current = current.parentElement) {
       if (
         current.getAttribute?.("role") === "listitem" ||
         current.getAttribute?.("role") === "row" ||
@@ -263,7 +362,18 @@
       }
     }
 
-    return element.closest?.("[tabindex='0']") || element.parentElement;
+    return element.closest?.('[role="listitem"], [role="row"], [tabindex="0"]') || null;
+  }
+
+  function clickChatRow(row) {
+    const target =
+      row.querySelector?.('[tabindex="0"]') ||
+      row.querySelector?.('[role="button"]') ||
+      row;
+
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    target.click();
   }
 
   function insertReply(text) {
@@ -271,19 +381,40 @@
     if (!composer) return false;
 
     composer.focus();
+
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(composer);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    let inserted = false;
+
     try {
-      document.execCommand("selectAll", false, null);
-      document.execCommand("insertText", false, text);
+      inserted = document.execCommand("insertText", false, text);
     } catch {
-      composer.textContent = text;
-      composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+      inserted = false;
     }
 
-    composer.dispatchEvent(new Event("input", { bubbles: true }));
+    if (!inserted) {
+      composer.textContent = text;
+      composer.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: text
+        })
+      );
+    } else {
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
     return true;
   }
 
   function findComposer() {
+    const main = document.querySelector("#main") || document.querySelector('[role="main"]') || document;
     const selectors = [
       'footer [contenteditable="true"][role="textbox"]',
       'footer div[contenteditable="true"]',
@@ -292,28 +423,89 @@
     ];
 
     for (const selector of selectors) {
-      const nodes = [...document.querySelectorAll(selector)].filter(isVisible);
+      const nodes = [...main.querySelectorAll(selector)].filter(isVisible);
       if (nodes.length) return nodes[nodes.length - 1];
     }
+
     return null;
   }
 
   function clickSend() {
+    const main = document.querySelector("#main") || document.querySelector('[role="main"]') || document;
     const selectors = [
       '[data-testid="send"]',
       'button[aria-label="Send"]',
       '[aria-label="Send"]',
+      'button[aria-label="שליחה"]',
+      '[aria-label="שליחה"]',
       'span[data-icon="send"]'
     ];
 
     for (const selector of selectors) {
-      const element = [...document.querySelectorAll(selector)].find(isVisible);
+      const element = [...main.querySelectorAll(selector)].find(isVisible);
       if (!element) continue;
+
       const button = element.closest("button, [role='button']") || element;
       button.click();
       return true;
     }
+
     return false;
+  }
+
+  function installBadge() {
+    if (document.getElementById("wa-automation-status")) {
+      state.badge = document.getElementById("wa-automation-status");
+      return;
+    }
+
+    const badge = document.createElement("div");
+    badge.id = "wa-automation-status";
+    badge.style.cssText = [
+      "position:fixed",
+      "right:12px",
+      "bottom:12px",
+      "z-index:2147483647",
+      "padding:7px 10px",
+      "border-radius:8px",
+      "font:12px/1.2 Arial,sans-serif",
+      "background:#202c33",
+      "color:#e9edef",
+      "box-shadow:0 2px 10px rgba(0,0,0,.25)",
+      "max-width:260px",
+      "pointer-events:none",
+      "opacity:.92"
+    ].join(";");
+
+    document.documentElement.appendChild(badge);
+    state.badge = badge;
+  }
+
+  function updateBadge() {
+    installBadge();
+
+    if (!state.settings?.enabled) {
+      showBadge("OFF", "Enable from the extension popup");
+      return;
+    }
+
+    if (state.processing) {
+      showBadge("THINKING", "Generating a reply…");
+      return;
+    }
+
+    showBadge(
+      state.settings?.autoSend ? "ON · AUTO-SEND" : "ON · DRAFT",
+      "Watching WhatsApp for new messages"
+    );
+  }
+
+  function showBadge(label, detail = "", isError = false) {
+    installBadge();
+    if (!state.badge) return;
+
+    state.badge.textContent = `WA Automation: ${label}${detail ? " — " + detail : ""}`;
+    state.badge.style.background = isError ? "#5f1f1f" : "#202c33";
   }
 
   function messageKey(chatName, message) {
@@ -332,7 +524,13 @@
     if (!element) return false;
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      style.visibility !== "hidden" &&
+      style.display !== "none"
+    );
   }
 
   function sleep(ms) {
@@ -340,9 +538,11 @@
   }
 
   function log(type, message, extra = {}) {
-    chrome.runtime.sendMessage({
-      type: "LOG_EVENT",
-      event: { type, message, ...extra }
-    }).catch(() => {});
+    chrome.runtime
+      .sendMessage({
+        type: "LOG_EVENT",
+        event: { type, message, ...extra }
+      })
+      .catch(() => {});
   }
 })();
