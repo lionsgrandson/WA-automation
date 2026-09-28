@@ -60,6 +60,21 @@
           });
         return true;
       }
+
+      if (message?.type === "WA_DIAGNOSE_CHAT") {
+        const diagnostic = diagnoseCurrentChat();
+        const summary = diagnostic.chatName
+          ? `${diagnostic.chatName}: ${diagnostic.total} messages (${diagnostic.incoming} in / ${diagnostic.outgoing} out / ${diagnostic.unknown} unknown)`
+          : "No open chat detected";
+
+        showBadge(
+          diagnostic.total > 0 ? "DIAGNOSTIC" : "NO MESSAGES",
+          summary,
+          diagnostic.total === 0
+        );
+        sendResponse({ ok: true, diagnostic });
+        return;
+      }
     });
 
     const observer = new MutationObserver(() => scheduleTick(250));
@@ -282,53 +297,166 @@
   function getMessageNodes() {
     const main = document.querySelector("#main") || document.querySelector('[role="main"]') || document;
 
-    const primary = [...main.querySelectorAll(".message-in, .message-out")];
-    if (primary.length) return primary;
+    const directMessages = [...main.querySelectorAll(".message-in, .message-out")];
+    if (directMessages.length) return dedupeMessageNodes(directMessages);
 
-    const containers = [...main.querySelectorAll('[data-testid="msg-container"]')];
-    if (containers.length) return containers;
+    const msgContainers = [...main.querySelectorAll('[data-testid="msg-container"]')];
+    if (msgContainers.length) return dedupeMessageNodes(msgContainers);
 
-    return [...main.querySelectorAll('[data-id]')].filter((node) => {
-      return (
+    const textAnchors = [
+      ...main.querySelectorAll('[data-pre-plain-text], .selectable-text, [data-testid="msg-text"]')
+    ];
+
+    const wrappers = textAnchors
+      .map(findMessageWrapper)
+      .filter(Boolean);
+
+    return dedupeMessageNodes(wrappers);
+  }
+
+  function findMessageWrapper(node) {
+    let current = node;
+
+    for (let i = 0; current && i < 12; i += 1, current = current.parentElement) {
+      if (
+        current.classList?.contains("message-in") ||
+        current.classList?.contains("message-out") ||
+        current.hasAttribute?.("data-id") ||
+        current.getAttribute?.("data-testid") === "msg-container"
+      ) {
+        return current;
+      }
+    }
+
+    return node.closest?.('[role="row"], [role="listitem"]') || node.parentElement;
+  }
+
+  function dedupeMessageNodes(nodes) {
+    const seen = new Set();
+    const result = [];
+
+    for (const node of nodes) {
+      const anchor =
+        node.querySelector?.("[data-pre-plain-text]") ||
         node.querySelector?.(".selectable-text") ||
-        node.querySelector?.('[data-testid="msg-text"]')
-      );
-    });
+        node.querySelector?.('[data-testid="msg-text"]') ||
+        node;
+
+      const key =
+        node.getAttribute?.("data-id") ||
+        anchor.getAttribute?.("data-pre-plain-text") ||
+        `${getMessageText(node)}|${result.length}`;
+
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      result.push(node);
+    }
+
+    return result;
   }
 
   function getDirection(node) {
     if (node.classList?.contains("message-in") || node.closest?.(".message-in")) return "in";
     if (node.classList?.contains("message-out") || node.closest?.(".message-out")) return "out";
 
+    const wrapper = findMessageWrapper(node);
     const dataId =
+      wrapper?.getAttribute?.("data-id") ||
+      wrapper?.querySelector?.("[data-id]")?.getAttribute("data-id") ||
       node.getAttribute?.("data-id") ||
-      node.closest?.("[data-id]")?.getAttribute("data-id") ||
       "";
 
-    if (dataId.includes("true_")) return "out";
-    if (dataId.includes("false_")) return "in";
+    if (/^true_/i.test(dataId) || /_true_/i.test(dataId)) return "out";
+    if (/^false_/i.test(dataId) || /_false_/i.test(dataId)) return "in";
 
-    const copyable = node.querySelector?.("[data-pre-plain-text]") || node.closest?.("[data-pre-plain-text]");
-    const pre = copyable?.getAttribute?.("data-pre-plain-text") || "";
+    const outgoingMarker = wrapper?.querySelector?.(
+      '[aria-label="You:"], [aria-label="You"], [aria-label^="You:"], [aria-label^="אתה:"], [aria-label^="את:"], [data-testid="msg-check"], [data-icon="msg-check"], [data-icon="msg-dblcheck"]'
+    );
+    if (outgoingMarker) return "out";
 
-    if (/\byou\b/i.test(pre)) return "out";
+    const preNode =
+      wrapper?.querySelector?.("[data-pre-plain-text]") ||
+      node.closest?.("[data-pre-plain-text]") ||
+      node.querySelector?.("[data-pre-plain-text]");
+
+    const pre = preNode?.getAttribute?.("data-pre-plain-text") || "";
+
+    if (/\bYou\s*:/i.test(pre) || /(?:^|\s)(?:אתה|את)\s*:/i.test(pre)) return "out";
+
+    // If WhatsApp exposes a text bubble but none of the outgoing signals are present,
+    // treat it as incoming only when the enclosing block looks like a message row.
+    if (
+      wrapper &&
+      (wrapper.querySelector?.(".selectable-text, [data-testid='msg-text'], [data-pre-plain-text]") ||
+        wrapper.matches?.("[data-pre-plain-text]"))
+    ) {
+      return "in";
+    }
+
     return null;
   }
 
   function getMessageText(node) {
-    const preferred =
-      node.matches?.(".selectable-text, [data-testid='msg-text']")
-        ? node
-        : node.querySelector?.(".selectable-text, [data-testid='msg-text']");
+    const candidates = [];
 
-    let text = preferred?.innerText || preferred?.textContent || "";
+    if (node.matches?.(".selectable-text, [data-testid='msg-text']")) candidates.push(node);
+    candidates.push(
+      ...(node.querySelectorAll?.(".selectable-text, [data-testid='msg-text']") || [])
+    );
 
-    if (!text.trim()) {
-      const copyable = node.querySelector?.("[data-pre-plain-text]");
-      text = copyable?.innerText || copyable?.textContent || "";
+    for (const candidate of candidates) {
+      const text = candidate.innerText || candidate.textContent || "";
+      const clean = text.replace(/\s+/g, " ").trim();
+      if (clean) return clean;
     }
 
-    return text.replace(/\s+/g, " ").trim();
+    const preNodes = [];
+    if (node.matches?.("[data-pre-plain-text]")) preNodes.push(node);
+    preNodes.push(...(node.querySelectorAll?.("[data-pre-plain-text]") || []));
+
+    for (const candidate of preNodes) {
+      const text = candidate.innerText || candidate.textContent || "";
+      const clean = text.replace(/\s+/g, " ").trim();
+      if (clean) return clean;
+    }
+
+    return "";
+  }
+
+  function diagnoseCurrentChat() {
+    const chatName = getChatName();
+    const nodes = getMessageNodes();
+    const details = [];
+    let incoming = 0;
+    let outgoing = 0;
+    let unknown = 0;
+
+    for (const node of nodes.slice(-20)) {
+      const direction = getDirection(node);
+      const text = getMessageText(node);
+
+      if (direction === "in") incoming += 1;
+      else if (direction === "out") outgoing += 1;
+      else unknown += 1;
+
+      details.push({
+        direction: direction || "unknown",
+        text: text.slice(0, 120),
+        className: String(node.className || "").slice(0, 160),
+        dataId: node.getAttribute?.("data-id") || ""
+      });
+    }
+
+    return {
+      chatName,
+      total: nodes.length,
+      incoming,
+      outgoing,
+      unknown,
+      latestDirection: details.at(-1)?.direction || "none",
+      latestText: details.at(-1)?.text || "",
+      details
+    };
   }
 
   function findUnreadChatRow() {
