@@ -1,3 +1,5 @@
+const AUTO_REPLY_FOOTER = "זהו מענה אוטומטי נציג אנושי יענה לכם עוד מעט לעכשיו לרוב השאלות אפשר לדבר עם הAI";
+
 const DEFAULT_SETTINGS = {
   enabled: false,
   autoSend: false,
@@ -141,7 +143,11 @@ async function generateReply({ settings, chatName, messages }) {
         systemInstruction,
         userPrompt
       });
-      return { ...result, model };
+      return {
+        ...result,
+        reply: appendAutoReplyFooter(result.reply),
+        model
+      };
     } catch (error) {
       lastError = error;
       if (![429, 500, 502, 503, 504].includes(error.status)) throw error;
@@ -149,6 +155,13 @@ async function generateReply({ settings, chatName, messages }) {
   }
 
   throw lastError || new Error("Gemini request failed.");
+}
+
+function appendAutoReplyFooter(reply) {
+  const clean = String(reply || "").trim();
+  if (!clean) return AUTO_REPLY_FOOTER;
+  if (clean.endsWith(AUTO_REPLY_FOOTER)) return clean;
+  return `${clean}\n\n${AUTO_REPLY_FOOTER}`;
 }
 
 async function callGemini({ apiKey, model, systemInstruction, userPrompt }) {
