@@ -190,8 +190,10 @@
       const result = response.result;
       if (!result?.reply) throw new Error("Gemini returned an empty reply.");
 
-      const inserted = insertReply(result.reply);
-      if (!inserted) throw new Error("Could not find the WhatsApp message composer.");
+      const inserted = await insertReply(result.reply);
+      if (!inserted) {
+        throw new Error("WhatsApp composer was found, but the generated text did not stay in the editor.");
+      }
 
       const shouldSend = Boolean(state.settings.autoSend) && !result.needsHuman;
 
@@ -376,54 +378,106 @@
     target.click();
   }
 
-  function insertReply(text) {
-    const composer = findComposer();
-    if (!composer) return false;
+  async function insertReply(text) {
+    const expected = normalizeComposerText(text);
 
-    composer.focus();
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const composer = findComposer();
+      if (!composer) {
+        await sleep(180);
+        continue;
+      }
 
+      composer.focus({ preventScroll: true });
+      await sleep(40);
+
+      selectAllComposerText(composer);
+
+      let inserted = false;
+
+      try {
+        inserted = document.execCommand("insertText", false, text);
+      } catch {
+        inserted = false;
+      }
+
+      if (!inserted) {
+        try {
+          composer.dispatchEvent(
+            new InputEvent("beforeinput", {
+              bubbles: true,
+              cancelable: true,
+              inputType: "insertText",
+              data: text
+            })
+          );
+          inserted = document.execCommand("insertText", false, text);
+        } catch {
+          inserted = false;
+        }
+      }
+
+      await sleep(180);
+
+      const freshComposer = findComposer();
+      const actual = normalizeComposerText(
+        freshComposer?.innerText ||
+        freshComposer?.textContent ||
+        ""
+      );
+
+      if (actual === expected || actual.includes(expected)) {
+        console.info(`[WA Automation] composer write verified on attempt ${attempt}`);
+        return true;
+      }
+
+      console.warn(
+        `[WA Automation] composer write attempt ${attempt} did not stick.`,
+        { inserted, actual, expected }
+      );
+
+      await sleep(180);
+    }
+
+    return false;
+  }
+
+  function selectAllComposerText(composer) {
     const selection = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(composer);
-    range.collapse(false);
     selection.removeAllRanges();
     selection.addRange(range);
+  }
 
-    let inserted = false;
-
-    try {
-      inserted = document.execCommand("insertText", false, text);
-    } catch {
-      inserted = false;
-    }
-
-    if (!inserted) {
-      composer.textContent = text;
-      composer.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          inputType: "insertText",
-          data: text
-        })
-      );
-    } else {
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-
-    return true;
+  function normalizeComposerText(value) {
+    return String(value || "")
+      .replace(/\u200B/g, "")
+      .replace(/\r/g, "")
+      .replace(/[ \t]+/g, " ")
+      .trim();
   }
 
   function findComposer() {
     const main = document.querySelector("#main") || document.querySelector('[role="main"]') || document;
     const selectors = [
+      '#main footer div[contenteditable="true"][data-tab="10"]',
+      'footer div[contenteditable="true"][data-tab="10"]',
       'footer [contenteditable="true"][role="textbox"]',
-      'footer div[contenteditable="true"]',
       '[data-testid="conversation-compose-box-input"]',
+      'footer div[contenteditable="true"]',
       'div[contenteditable="true"][role="textbox"]'
     ];
 
     for (const selector of selectors) {
-      const nodes = [...main.querySelectorAll(selector)].filter(isVisible);
+      const nodes = [...document.querySelectorAll(selector)].filter((node) => {
+        if (!isVisible(node)) return false;
+        if (node.getAttribute("contenteditable") !== "true") return false;
+
+        const rect = node.getBoundingClientRect();
+        return rect.top > window.innerHeight * 0.45;
+      });
+
       if (nodes.length) return nodes[nodes.length - 1];
     }
 
@@ -438,7 +492,8 @@
       '[aria-label="Send"]',
       'button[aria-label="שליחה"]',
       '[aria-label="שליחה"]',
-      'span[data-icon="send"]'
+      'span[data-icon="send"]',
+      'span[data-icon="wds-ic-send-filled"]'
     ];
 
     for (const selector of selectors) {
