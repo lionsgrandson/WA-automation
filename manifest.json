@@ -1,9 +1,11 @@
 {
   "manifest_version": 3,
   "name": "WA Automation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI-assisted WhatsApp Web replies using configurable business context and Gemini.",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "https://web.whatsapp.com/*",
     "https://generativelanguage.googleapis.com/*"
@@ -22,8 +24,12 @@
   "options_page": "src/options.html",
   "content_scripts": [
     {
-      "matches": ["https://web.whatsapp.com/*"],
-      "js": ["src/content.js"],
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
+        "src/content.js"
+      ],
       "run_at": "document_idle"
     }
   ]
