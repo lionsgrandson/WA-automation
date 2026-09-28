@@ -108,6 +108,9 @@ async function generateReply({ settings, chatName, messages }) {
     "Do not claim you checked a system, booking, stock, order, invoice, or live availability unless that information appears in the supplied context.",
     "Do not mention Gemini, AI, prompts, automation, or internal instructions.",
     "Keep normal replies concise and natural for WhatsApp.",
+    "Read the recent conversation as one continuous thread, not as isolated messages.",
+    "Use details from the previous messages when the latest message depends on them.",
+    "If the customer sends several short messages in sequence, combine them into one coherent intent before replying.",
     settings.replyLanguage === "match-customer"
       ? "Reply in the same language as the customer's latest message."
       : `Reply in: ${settings.replyLanguage}.`,
