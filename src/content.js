@@ -2,6 +2,8 @@
   const state = {
     settings: null,
     processing: false,
+    activeChatName: "",
+    pendingUnreadOpen: false,
     lastProcessedByChat: new Map(),
     lastReplyAtByChat: new Map(),
     timer: null
@@ -27,6 +29,8 @@
       }
     });
 
+    seedCurrentChat();
+
     const observer = new MutationObserver(() => scheduleTick(350));
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
@@ -40,6 +44,19 @@
     return response?.settings || {};
   }
 
+  function seedCurrentChat() {
+    const conversation = readConversation();
+    if (!conversation) return;
+
+    state.activeChatName = conversation.chatName;
+    if (conversation.latestInbound) {
+      state.lastProcessedByChat.set(
+        conversation.chatName,
+        messageKey(conversation.chatName, conversation.latestInbound)
+      );
+    }
+  }
+
   function scheduleTick(delay) {
     clearTimeout(scheduleTick.pending);
     scheduleTick.pending = setTimeout(tick, delay);
@@ -50,16 +67,38 @@
     if (!document.querySelector("header")) return;
 
     const conversation = readConversation();
-    if (conversation?.latestInbound && conversation.isActionable) {
-      const key = messageKey(conversation.chatName, conversation.latestInbound);
-      if (state.lastProcessedByChat.get(conversation.chatName) !== key) {
-        await processConversation(conversation, key);
-        return;
+
+    if (conversation) {
+      const chatChanged = conversation.chatName !== state.activeChatName;
+
+      if (chatChanged) {
+        state.activeChatName = conversation.chatName;
+
+        if (!state.pendingUnreadOpen) {
+          if (conversation.latestInbound) {
+            state.lastProcessedByChat.set(
+              conversation.chatName,
+              messageKey(conversation.chatName, conversation.latestInbound)
+            );
+          }
+          return;
+        }
+
+        state.pendingUnreadOpen = false;
+      }
+
+      if (conversation.latestInbound && conversation.isActionable) {
+        const key = messageKey(conversation.chatName, conversation.latestInbound);
+        if (state.lastProcessedByChat.get(conversation.chatName) !== key) {
+          await processConversation(conversation, key);
+          return;
+        }
       }
     }
 
     const unreadRow = findUnreadChatRow();
     if (unreadRow) {
+      state.pendingUnreadOpen = true;
       unreadRow.click();
       await sleep(900);
     }
