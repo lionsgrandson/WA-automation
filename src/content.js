@@ -41,6 +41,24 @@
           chatName: conversation?.chatName || "",
           messageCount: conversation?.messages?.length || 0
         });
+        return;
+      }
+
+      if (message?.type === "WA_TEST_WRITE") {
+        insertReply(message.text || "WA Automation test message")
+          .then((written) => {
+            showBadge(
+              written ? "WRITE OK" : "WRITE FAILED",
+              written ? "Test text was inserted" : "Composer rejected test text",
+              !written
+            );
+            sendResponse({ ok: written });
+          })
+          .catch((error) => {
+            showBadge("WRITE ERROR", error?.message || String(error), true);
+            sendResponse({ ok: false, error: error?.message || String(error) });
+          });
+        return true;
       }
     });
 
