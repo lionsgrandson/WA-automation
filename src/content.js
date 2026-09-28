@@ -248,12 +248,21 @@
         throw new Error("WhatsApp composer was found, but the generated text did not stay in the editor.");
       }
 
-      const shouldSend = Boolean(state.settings.autoSend) && !result.needsHuman;
+      const shouldSend = Boolean(state.settings.autoSend);
 
       if (shouldSend) {
-        await sleep(500 + Math.floor(Math.random() * 900));
-        const sent = clickSend();
-        if (!sent) throw new Error("Draft inserted, but the send button was not found.");
+        showBadge(
+          "SENDING",
+          result.needsHuman ? "Sending reply; human follow-up flagged…" : "Sending reply…"
+        );
+
+        await sleep(350 + Math.floor(Math.random() * 450));
+
+        const sent = await sendCurrentComposer();
+        if (!sent) {
+          throw new Error("Reply was written, but WhatsApp did not confirm that it was sent.");
+        }
+
         state.lastReplyAtByChat.set(conversation.chatName, Date.now());
       }
 
@@ -271,7 +280,9 @@
 
       showBadge(
         shouldSend ? "SENT" : "DRAFTED",
-        result.needsHuman ? "Draft needs human review" : shouldSend ? "Reply sent" : "Reply drafted"
+        shouldSend
+          ? (result.needsHuman ? "Reply sent; human follow-up flagged" : "Reply sent")
+          : (result.needsHuman ? "Draft needs human review" : "Reply drafted")
       );
 
       log(
@@ -692,28 +703,161 @@
     return null;
   }
 
-  function clickSend() {
-    const main = document.querySelector("#main") || document.querySelector('[role="main"]') || document;
+  async function sendCurrentComposer() {
+    const beforeComposer = findComposer();
+    const beforeText = normalizeComposerText(
+      beforeComposer?.innerText || beforeComposer?.textContent || ""
+    );
+
+    if (!beforeComposer || !beforeText) return false;
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const sendControl = findSendControl();
+
+      if (sendControl) {
+        showBadge("SENDING", `Clicking send… attempt ${attempt}`);
+        fireRealisticClick(sendControl);
+      } else {
+        showBadge("SENDING", `Trying Enter… attempt ${attempt}`);
+        dispatchEnter(findComposer());
+      }
+
+      await sleep(450);
+
+      if (didComposerSend(beforeText)) {
+        console.info(`[WA Automation] send verified on attempt ${attempt}`);
+        return true;
+      }
+
+      // WhatsApp often swaps the footer node immediately after text insertion.
+      // Re-focus the latest live composer before retrying.
+      const composer = findComposer();
+      composer?.focus({ preventScroll: true });
+      await sleep(120);
+    }
+
+    return false;
+  }
+
+  function findSendControl() {
+    const main =
+      document.querySelector("#main") ||
+      document.querySelector('[role="main"]') ||
+      document;
+
     const selectors = [
+      '[data-testid="compose-btn-send"]',
       '[data-testid="send"]',
       'button[aria-label="Send"]',
-      '[aria-label="Send"]',
+      '[role="button"][aria-label="Send"]',
       'button[aria-label="שליחה"]',
+      '[role="button"][aria-label="שליחה"]',
+      '[aria-label="Send"]',
       '[aria-label="שליחה"]',
       'span[data-icon="send"]',
-      'span[data-icon="wds-ic-send-filled"]'
+      'span[data-icon="wds-ic-send-filled"]',
+      'span[data-icon*="send"]'
     ];
 
     for (const selector of selectors) {
       const element = [...main.querySelectorAll(selector)].find(isVisible);
       if (!element) continue;
 
-      const button = element.closest("button, [role='button']") || element;
-      button.click();
-      return true;
+      return (
+        element.closest("button") ||
+        element.closest('[role="button"]') ||
+        element
+      );
     }
 
-    return false;
+    // Final fallback: inspect visible footer buttons near the composer and prefer
+    // one containing a send icon or an accessible send label.
+    const footer = main.querySelector("footer");
+    if (!footer) return null;
+
+    const candidates = [
+      ...footer.querySelectorAll('button, [role="button"]')
+    ].filter(isVisible);
+
+    return (
+      candidates.find((button) => {
+        const label = [
+          button.getAttribute("aria-label") || "",
+          button.getAttribute("data-testid") || "",
+          button.textContent || ""
+        ].join(" ");
+
+        return /send|שליחה/i.test(label) ||
+          Boolean(button.querySelector('[data-icon*="send"]'));
+      }) || null
+    );
+  }
+
+  function fireRealisticClick(element) {
+    if (!element) return;
+
+    const events = [
+      ["pointerdown", PointerEvent],
+      ["mousedown", MouseEvent],
+      ["pointerup", PointerEvent],
+      ["mouseup", MouseEvent],
+      ["click", MouseEvent]
+    ];
+
+    for (const [type, EventType] of events) {
+      try {
+        element.dispatchEvent(
+          new EventType(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            button: 0,
+            buttons: type.includes("down") ? 1 : 0,
+            pointerType: "mouse"
+          })
+        );
+      } catch {
+        // Some browsers reject PointerEvent-only options on MouseEvent.
+      }
+    }
+
+    try {
+      element.click();
+    } catch {
+      // Event sequence above may already have activated the control.
+    }
+  }
+
+  function dispatchEnter(composer) {
+    if (!composer) return false;
+
+    composer.focus({ preventScroll: true });
+
+    const options = {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    };
+
+    composer.dispatchEvent(new KeyboardEvent("keydown", options));
+    composer.dispatchEvent(new KeyboardEvent("keypress", options));
+    composer.dispatchEvent(new KeyboardEvent("keyup", options));
+    return true;
+  }
+
+  function didComposerSend(previousText) {
+    const composer = findComposer();
+    const currentText = normalizeComposerText(
+      composer?.innerText || composer?.textContent || ""
+    );
+
+    // Successful sends normally clear the composer or replace it with a fresh,
+    // empty contenteditable. If the full previous reply is still there, sending
+    // did not happen.
+    return !currentText || !currentText.includes(previousText);
   }
 
   function installBadge() {
