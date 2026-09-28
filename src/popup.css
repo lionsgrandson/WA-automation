@@ -47,3 +47,10 @@ button {
 #status {
   margin-bottom: 0;
 }
+
+
+button.secondary {
+  background: #202c33;
+  color: #e9edef;
+  border: 1px solid #33434c;
+}
