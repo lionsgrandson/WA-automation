@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WA Automation Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <h1>WA Automation</h1>
+      <p>Configure what the assistant knows and how it is allowed to reply.</p>
+    </header>
+
+    <section class="card warning">
+      <strong>Privacy note</strong>
+      <p>Customer message text sent for a reply is sent to the Gemini API. Google states that free-tier Gemini API content may be used to improve its products. Do not enable this for conversations you are not permitted to process with a third-party AI service.</p>
+    </section>
+
+    <section class="card grid">
+      <label class="toggle-row">
+        <input id="enabled" type="checkbox" />
+        <span>Automation enabled</span>
+      </label>
+
+      <label class="toggle-row">
+        <input id="autoSend" type="checkbox" />
+        <span>Automatically send confident replies</span>
+      </label>
+
+      <label class="toggle-row">
+        <input id="skipGroups" type="checkbox" />
+        <span>Skip group chats</span>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Gemini</h2>
+      <label>
+        API key
+        <input id="apiKey" type="password" autocomplete="off" placeholder="AIza..." />
+      </label>
+      <div class="two-col">
+        <label>
+          Primary model
+          <input id="model" type="text" value="gemini-3.8-flash" />
+        </label>
+        <label>
+          Fallback model
+          <input id="fallbackModel" type="text" value="gemini-3.5-flash-lite" />
+        </label>
+      </div>
+      <button id="testGemini" type="button" class="secondary">Test Gemini</button>
+      <span id="geminiStatus" class="status"></span>
+    </section>
+
+    <section class="card">
+      <h2>Business knowledge</h2>
+      <label>
+        Business name
+        <input id="businessName" type="text" placeholder="Example Ltd." />
+      </label>
+      <label>
+        Opening hours
+        <textarea id="openingHours" rows="4" placeholder="Sun-Thu 09:00-18:00&#10;Fri 09:00-13:00&#10;Sat closed"></textarea>
+      </label>
+      <label>
+        Business context
+        <textarea id="businessContext" rows="8" placeholder="Services, pricing rules, contact details, policies, areas served, common answers..."></textarea>
+      </label>
+      <label>
+        Website
+        <input id="websiteUrl" type="url" placeholder="https://example.com" />
+      </label>
+      <div class="actions">
+        <button id="learnWebsite" type="button" class="secondary">Learn website</button>
+        <span id="websiteStatus" class="status"></span>
+      </div>
+      <label>
+        Learned website content
+        <textarea id="websiteKnowledge" rows="12" placeholder="Click Learn website, or paste/edit knowledge manually."></textarea>
+      </label>
+      <p id="websiteLearnedAt" class="muted"></p>
+    </section>
+
+    <section class="card">
+      <h2>Reply behavior</h2>
+      <div class="two-col">
+        <label>
+          Language
+          <select id="replyLanguage">
+            <option value="match-customer">Match customer</option>
+            <option value="Hebrew">Hebrew</option>
+            <option value="English">English</option>
+          </select>
+        </label>
+        <label>
+          Minimum seconds between replies
+          <input id="minReplyIntervalSec" type="number" min="5" max="3600" />
+        </label>
+      </div>
+      <label>
+        Tone
+        <input id="tone" type="text" placeholder="friendly, concise, professional" />
+      </label>
+      <label>
+        Conversation messages sent to Gemini
+        <input id="maxConversationMessages" type="number" min="2" max="30" />
+      </label>
+    </section>
+
+    <footer class="savebar">
+      <button id="save" type="button">Save settings</button>
+      <span id="saveStatus" class="status"></span>
+    </footer>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
