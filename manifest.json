@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "WA Automation",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "AI-assisted WhatsApp Web replies using configurable business context and Gemini.",
   "permissions": [
     "storage",
