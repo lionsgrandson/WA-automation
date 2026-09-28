@@ -30,5 +30,29 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   enabled.addEventListener("change", saveToggle);
   autoSend.addEventListener("change", saveToggle);
+
+  document.getElementById("testWriter").addEventListener("click", async () => {
+    status.textContent = "Testing WhatsApp composer…";
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !String(tab.url || "").startsWith("https://web.whatsapp.com/")) {
+      status.textContent = "Open WhatsApp Web and a chat first.";
+      return;
+    }
+
+    try {
+      const result = await chrome.tabs.sendMessage(tab.id, {
+        type: "WA_TEST_WRITE",
+        text: "בדיקת WA Automation — אפשר למחוק את ההודעה הזאת."
+      });
+
+      status.textContent = result?.ok
+        ? "Writer works — test text inserted."
+        : result?.error || "Writer failed to insert text.";
+    } catch (error) {
+      status.textContent = "Could not reach WhatsApp. Refresh WhatsApp Web and try again.";
+    }
+  });
+
   document.getElementById("options").addEventListener("click", () => chrome.runtime.openOptionsPage());
 });
