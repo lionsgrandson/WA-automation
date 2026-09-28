@@ -198,15 +198,17 @@
 
   async function processConversation(conversation, key) {
     state.processing = true;
-    state.lastProcessedByChat.set(conversation.chatName, key);
     showBadge("THINKING", `Replying to ${conversation.chatName}…`);
 
     try {
       const lastReplyAt = state.lastReplyAtByChat.get(conversation.chatName) || 0;
       const minimumMs = Math.max(5, Number(state.settings.minReplyIntervalSec) || 20) * 1000;
+      const elapsed = Date.now() - lastReplyAt;
 
-      if (Date.now() - lastReplyAt < minimumMs) {
-        showBadge("COOLDOWN", "Waiting before another reply");
+      if (elapsed < minimumMs) {
+        const remaining = minimumMs - elapsed;
+        showBadge("COOLDOWN", `Retrying in ${Math.ceil(remaining / 1000)}s`);
+        setTimeout(() => scheduleTick(50), remaining + 100);
         return;
       }
 
@@ -236,6 +238,8 @@
         if (!sent) throw new Error("Draft inserted, but the send button was not found.");
         state.lastReplyAtByChat.set(conversation.chatName, Date.now());
       }
+
+      state.lastProcessedByChat.set(conversation.chatName, key);
 
       showBadge(
         shouldSend ? "SENT" : "DRAFTED",
