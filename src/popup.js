@@ -31,6 +31,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   enabled.addEventListener("change", saveToggle);
   autoSend.addEventListener("change", saveToggle);
 
+  document.getElementById("diagnose").addEventListener("click", async () => {
+    status.textContent = "Diagnosing current chat…";
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id || !String(tab.url || "").startsWith("https://web.whatsapp.com/")) {
+      status.textContent = "Open WhatsApp Web and a chat first.";
+      return;
+    }
+
+    try {
+      const result = await chrome.tabs.sendMessage(tab.id, { type: "WA_DIAGNOSE_CHAT" });
+      const d = result?.diagnostic;
+
+      if (!result?.ok || !d) {
+        status.textContent = result?.error || "Diagnosis failed.";
+        return;
+      }
+
+      status.textContent =
+        `${d.total} messages: ${d.incoming} incoming / ${d.outgoing} outgoing / ${d.unknown} unknown. Latest: ${d.latestDirection} — ${d.latestText || "(no text)"}`;
+    } catch (error) {
+      status.textContent = "Could not reach WhatsApp. Refresh WhatsApp Web and try again.";
+    }
+  });
+
   document.getElementById("testWriter").addEventListener("click", async () => {
     status.textContent = "Testing WhatsApp composer…";
 
