@@ -32,7 +32,7 @@ async function load() {
   const response = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
   if (!response?.ok) return setStatus("saveStatus", response?.error || "Could not load settings.", true);
 
-  const settings = response.settings;
+  const settings = response.settings || {};
   for (const id of ids) {
     const input = document.getElementById(id);
     if (!input) continue;
@@ -93,12 +93,16 @@ async function learnWebsite() {
 
 function readForm() {
   const result = {};
+
   for (const id of ids) {
     const input = document.getElementById(id);
+    if (!input) continue;
+
     if (input.type === "checkbox") result[id] = input.checked;
     else if (input.type === "number") result[id] = Number(input.value);
-    else result[id] = input.value.trim();
+    else result[id] = String(input.value || "").trim();
   }
+
   return result;
 }
 
@@ -117,6 +121,7 @@ function renderLearnedAt(value) {
 
 function setStatus(id, message, isError = false) {
   const el = document.getElementById(id);
+  if (!el) return;
   el.textContent = message;
   el.classList.toggle("error", isError);
 }
