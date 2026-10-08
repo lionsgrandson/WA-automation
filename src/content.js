@@ -23,8 +23,9 @@
 
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
-      state.settings = { ...state.settings };
-      for (const [key, change] of Object.entries(changes)) {
+      state.settings = { ...(state.settings || {}) };
+      for (const [key, change] of Object.entries(changes || {})) {
+        if (!change) continue;
         state.settings[key] = change.newValue;
       }
       updateBadge();
@@ -92,7 +93,9 @@
 
   async function loadSettings() {
     const response = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
-    if (!response?.ok && response?.error) throw new Error(response.error);
+    if (!response?.ok) {
+      throw new Error(response?.error || "Could not load extension settings.");
+    }
     return response?.settings || {};
   }
 
