@@ -901,8 +901,9 @@
       return;
     }
 
+    const mode = state.settings?.autoSend ? "ON · AUTO-SEND" : "ON · DRAFT";
     showBadge(
-      state.settings?.autoSend ? "ON · AUTO-SEND" : "ON · DRAFT",
+      state.settings?.awayMode ? `${mode} · AWAY` : mode,
       "Watching WhatsApp for new messages"
     );
   }
