@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", async () => {
   const enabled = document.getElementById("enabled");
   const autoSend = document.getElementById("autoSend");
+  const awayMode = document.getElementById("awayMode");
   const summary = document.getElementById("summary");
   const status = document.getElementById("status");
 
@@ -13,6 +14,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const settings = response.settings;
   enabled.checked = Boolean(settings.enabled);
   autoSend.checked = Boolean(settings.autoSend);
+  awayMode.checked = Boolean(settings.awayMode);
   summary.textContent = settings.businessName
     ? `${settings.businessName} · ${settings.model}`
     : `Not configured · ${settings.model}`;
@@ -22,7 +24,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       type: "SAVE_SETTINGS",
       settings: {
         enabled: enabled.checked,
-        autoSend: autoSend.checked
+        autoSend: autoSend.checked,
+        awayMode: awayMode.checked
       }
     });
     status.textContent = result?.ok ? "Saved." : result?.error || "Save failed.";
@@ -30,6 +33,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   enabled.addEventListener("change", saveToggle);
   autoSend.addEventListener("change", saveToggle);
+  awayMode.addEventListener("change", saveToggle);
 
   document.getElementById("diagnose").addEventListener("click", async () => {
     status.textContent = "Diagnosing current chat…";
