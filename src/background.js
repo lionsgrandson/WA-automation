@@ -93,10 +93,26 @@ async function handleMessage(message) {
 
 async function getSettings() {
   const stored = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));
-  return { ...DEFAULT_SETTINGS, ...stored };
+  const settings = { ...DEFAULT_SETTINGS, ...(stored || {}) };
+
+  // Self-heal missing or malformed values after extension upgrades.
+  if (typeof settings.awayMode !== "boolean") settings.awayMode = false;
+  if (typeof settings.awayMessageHebrew !== "string" || !settings.awayMessageHebrew.trim()) {
+    settings.awayMessageHebrew = DEFAULT_AWAY_MESSAGE_HE;
+  }
+  if (typeof settings.awayMessageEnglish !== "string" || !settings.awayMessageEnglish.trim()) {
+    settings.awayMessageEnglish = DEFAULT_AWAY_MESSAGE_EN;
+  }
+  if (!Number.isFinite(Number(settings.maxConversationMessages))) settings.maxConversationMessages = 12;
+  if (!Number.isFinite(Number(settings.minReplyIntervalSec))) settings.minReplyIntervalSec = 20;
+
+  return settings;
 }
 
 async function generateReply({ settings, chatName, messages }) {
+  settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  messages = Array.isArray(messages) ? messages : [];
+
   if (!settings.apiKey) throw new Error("Gemini API key is missing.");
 
   const recent = messages
