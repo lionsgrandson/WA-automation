@@ -708,37 +708,108 @@
 
   async function sendCurrentComposer() {
     const beforeComposer = findComposer();
-    const beforeText = normalizeComposerText(
+    const draftText = normalizeComposerText(
       beforeComposer?.innerText || beforeComposer?.textContent || ""
     );
 
-    if (!beforeComposer || !beforeText) return false;
+    if (!beforeComposer || !draftText) {
+      console.warn("[WA Automation] send aborted: composer is empty.");
+      return false;
+    }
 
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
-      const sendControl = findSendControl();
+    const beforeOutgoing = captureOutgoingMessageKeys();
 
-      if (sendControl) {
-        showBadge("SENDING", `Clicking send… attempt ${attempt}`);
-        fireRealisticClick(sendControl);
-      } else {
-        showBadge("SENDING", `Trying Enter… attempt ${attempt}`);
-        dispatchEnter(findComposer());
+    // The WhatsApp footer can remount after text is inserted, so wait for the
+    // real Send control to appear before trying to click it.
+    let sendControl = null;
+    for (let i = 0; i < 12; i += 1) {
+      sendControl = findSendControl();
+      if (sendControl) break;
+      await sleep(150);
+    }
+
+    if (!sendControl) {
+      console.error(
+        "[WA Automation] send button not found.",
+        describeFooterControls()
+      );
+      showBadge("SEND ERROR", "Send button not found", true);
+      return false;
+    }
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      // Always resolve a fresh live control. WhatsApp may have replaced the
+      // previous node between attempts.
+      sendControl = findSendControl();
+
+      if (!sendControl) {
+        console.error(
+          "[WA Automation] send button disappeared before click.",
+          describeFooterControls()
+        );
+        return false;
       }
 
-      await sleep(450);
+      showBadge("SENDING", `Clicking Send… attempt ${attempt}`);
 
-      if (didComposerSend(beforeText)) {
-        console.info(`[WA Automation] send verified on attempt ${attempt}`);
+      try {
+        sendControl.click();
+      } catch (error) {
+        console.error("[WA Automation] send button click failed:", error);
+        return false;
+      }
+
+      // Wait for WhatsApp to create a new outgoing message. This is a much
+      // stronger success signal than merely seeing the composer clear.
+      for (let check = 0; check < 14; check += 1) {
+        await sleep(150);
+
+        if (hasNewOutgoingReply(beforeOutgoing, draftText)) {
+          console.info(
+            `[WA Automation] outgoing reply verified after send attempt ${attempt}`
+          );
+          return true;
+        }
+
+        const composerText = getComposerText();
+
+        // The composer being empty is still useful as a secondary success
+        // signal because WhatsApp sometimes mounts the outgoing bubble slightly
+        // after clearing the editor.
+        if (!composerText) {
+          for (let lateCheck = 0; lateCheck < 8; lateCheck += 1) {
+            await sleep(150);
+            if (hasNewOutgoingReply(beforeOutgoing, draftText)) {
+              console.info(
+                `[WA Automation] outgoing reply verified after composer clear on attempt ${attempt}`
+              );
+              return true;
+            }
+          }
+
+          // WhatsApp accepted the click and cleared the editor. Do not click
+          // again, because a second click could create a duplicate.
+          console.info(
+            "[WA Automation] composer cleared after click; treating send as successful."
+          );
+          return true;
+        }
+      }
+
+      // Only retry when the exact draft is still present. If WhatsApp changed
+      // the editor state, avoid a second click to prevent duplicate sends.
+      const remaining = getComposerText();
+      if (!remaining.includes(draftText)) {
         return true;
       }
 
-      // WhatsApp often swaps the footer node immediately after text insertion.
-      // Re-focus the latest live composer before retrying.
-      const composer = findComposer();
-      composer?.focus({ preventScroll: true });
-      await sleep(120);
+      await sleep(250);
     }
 
+    console.error(
+      "[WA Automation] send click did not produce a new outgoing message.",
+      describeFooterControls()
+    );
     return false;
   }
 
@@ -749,32 +820,29 @@
       document;
 
     const selectors = [
-      '[data-testid="compose-btn-send"]',
-      '[data-testid="send"]',
-      'button[aria-label="Send"]',
-      '[role="button"][aria-label="Send"]',
-      'button[aria-label="שליחה"]',
-      '[role="button"][aria-label="שליחה"]',
-      '[aria-label="Send"]',
-      '[aria-label="שליחה"]',
-      'span[data-icon="send"]',
-      'span[data-icon="wds-ic-send-filled"]',
-      'span[data-icon*="send"]'
+      'footer button[aria-label="Send"]',
+      'footer [role="button"][aria-label="Send"]',
+      'footer button[aria-label="שליחה"]',
+      'footer [role="button"][aria-label="שליחה"]',
+      'footer [data-testid="compose-btn-send"]',
+      'footer [data-testid="send"]',
+      'footer span[data-icon="wds-ic-send-filled"]',
+      'footer span[data-icon="send"]',
+      'footer span[data-icon*="send"]'
     ];
 
     for (const selector of selectors) {
       const element = [...main.querySelectorAll(selector)].find(isVisible);
       if (!element) continue;
 
-      return (
+      const control =
         element.closest("button") ||
         element.closest('[role="button"]') ||
-        element
-      );
+        element;
+
+      if (isVisible(control)) return control;
     }
 
-    // Final fallback: inspect visible footer buttons near the composer and prefer
-    // one containing a send icon or an accessible send label.
     const footer = main.querySelector("footer");
     if (!footer) return null;
 
@@ -783,84 +851,94 @@
     ].filter(isVisible);
 
     return (
-      candidates.find((button) => {
+      candidates.find((control) => {
         const label = [
-          button.getAttribute("aria-label") || "",
-          button.getAttribute("data-testid") || "",
-          button.textContent || ""
+          control.getAttribute("aria-label") || "",
+          control.getAttribute("data-testid") || "",
+          control.getAttribute("title") || "",
+          control.textContent || ""
         ].join(" ");
 
-        return /send|שליחה/i.test(label) ||
-          Boolean(button.querySelector('[data-icon*="send"]'));
+        return (
+          /(?:^|\s)(?:send|שליחה)(?:\s|$)/i.test(label) ||
+          Boolean(control.querySelector('[data-icon="wds-ic-send-filled"], [data-icon="send"], [data-icon*="send"]'))
+        );
       }) || null
     );
   }
 
-  function fireRealisticClick(element) {
-    if (!element) return;
+  function captureOutgoingMessageKeys() {
+    const conversation = readConversation();
+    const keys = new Set();
 
-    const events = [
-      ["pointerdown", PointerEvent],
-      ["mousedown", MouseEvent],
-      ["pointerup", PointerEvent],
-      ["mouseup", MouseEvent],
-      ["click", MouseEvent]
-    ];
+    for (const message of conversation?.messages || []) {
+      if (message.direction !== "out") continue;
+      keys.add(messageKey(conversation.chatName || "", message));
+    }
 
-    for (const [type, EventType] of events) {
-      try {
-        element.dispatchEvent(
-          new EventType(type, {
-            bubbles: true,
-            cancelable: true,
-            view: window,
-            button: 0,
-            buttons: type.includes("down") ? 1 : 0,
-            pointerType: "mouse"
-          })
-        );
-      } catch {
-        // Some browsers reject PointerEvent-only options on MouseEvent.
+    return keys;
+  }
+
+  function hasNewOutgoingReply(beforeKeys, expectedText) {
+    const conversation = readConversation();
+    if (!conversation) return false;
+
+    const expected = normalizeComposerText(expectedText);
+    const expectedStart = expected.slice(0, Math.min(100, expected.length));
+
+    for (const message of conversation.messages.slice(-8)) {
+      if (message.direction !== "out") continue;
+
+      const key = messageKey(conversation.chatName, message);
+      if (beforeKeys.has(key)) continue;
+
+      const actual = normalizeComposerText(message.text);
+
+      if (
+        actual === expected ||
+        actual.includes(expected) ||
+        expected.includes(actual) ||
+        (expectedStart.length >= 20 && actual.includes(expectedStart))
+      ) {
+        return true;
       }
     }
 
-    try {
-      element.click();
-    } catch {
-      // Event sequence above may already have activated the control.
-    }
+    return false;
   }
 
-  function dispatchEnter(composer) {
-    if (!composer) return false;
-
-    composer.focus({ preventScroll: true });
-
-    const options = {
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true
-    };
-
-    composer.dispatchEvent(new KeyboardEvent("keydown", options));
-    composer.dispatchEvent(new KeyboardEvent("keypress", options));
-    composer.dispatchEvent(new KeyboardEvent("keyup", options));
-    return true;
-  }
-
-  function didComposerSend(previousText) {
+  function getComposerText() {
     const composer = findComposer();
-    const currentText = normalizeComposerText(
+    return normalizeComposerText(
       composer?.innerText || composer?.textContent || ""
     );
+  }
 
-    // Successful sends normally clear the composer or replace it with a fresh,
-    // empty contenteditable. If the full previous reply is still there, sending
-    // did not happen.
-    return !currentText || !currentText.includes(previousText);
+  function describeFooterControls() {
+    const main =
+      document.querySelector("#main") ||
+      document.querySelector('[role="main"]') ||
+      document;
+
+    const footer = main.querySelector("footer");
+    if (!footer) return { footer: false, controls: [] };
+
+    const controls = [
+      ...footer.querySelectorAll('button, [role="button"]')
+    ].filter(isVisible);
+
+    return {
+      footer: true,
+      controls: controls.slice(-12).map((control) => ({
+        ariaLabel: control.getAttribute("aria-label") || "",
+        testId: control.getAttribute("data-testid") || "",
+        title: control.getAttribute("title") || "",
+        icons: [...control.querySelectorAll("[data-icon]")]
+          .map((icon) => icon.getAttribute("data-icon"))
+          .filter(Boolean)
+          .slice(0, 5)
+      }))
+    };
   }
 
   function installBadge() {
