@@ -11,29 +11,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     return;
   }
 
-  const settings = response.settings;
-  enabled.checked = Boolean(settings.enabled);
-  autoSend.checked = Boolean(settings.autoSend);
-  awayMode.checked = Boolean(settings.awayMode);
-  summary.textContent = settings.businessName
-    ? `${settings.businessName} · ${settings.model}`
-    : `Not configured · ${settings.model}`;
+  const settings = response.settings || {};
+  if (enabled) enabled.checked = Boolean(settings.enabled);
+  if (autoSend) autoSend.checked = Boolean(settings.autoSend);
+  if (awayMode) awayMode.checked = Boolean(settings.awayMode);
+
+  if (summary) {
+    summary.textContent = settings.businessName
+      ? `${settings.businessName} · ${settings.model || "Gemini"}`
+      : `Not configured · ${settings.model || "Gemini"}`;
+  }
 
   async function saveToggle() {
     const result = await chrome.runtime.sendMessage({
       type: "SAVE_SETTINGS",
       settings: {
-        enabled: enabled.checked,
-        autoSend: autoSend.checked,
-        awayMode: awayMode.checked
+        enabled: Boolean(enabled?.checked),
+        autoSend: Boolean(autoSend?.checked),
+        awayMode: Boolean(awayMode?.checked)
       }
     });
-    status.textContent = result?.ok ? "Saved." : result?.error || "Save failed.";
+    if (status) status.textContent = result?.ok ? "Saved." : result?.error || "Save failed.";
   }
 
-  enabled.addEventListener("change", saveToggle);
-  autoSend.addEventListener("change", saveToggle);
-  awayMode.addEventListener("change", saveToggle);
+  enabled?.addEventListener("change", saveToggle);
+  autoSend?.addEventListener("change", saveToggle);
+  awayMode?.addEventListener("change", saveToggle);
 
   document.getElementById("diagnose").addEventListener("click", async () => {
     status.textContent = "Diagnosing current chat…";
