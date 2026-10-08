@@ -1,11 +1,13 @@
 const AUTO_REPLY_FOOTER = "זהו מענה אוטומטי נציג אנושי יענה לכם עוד מעט לעכשיו לרוב השאלות אפשר לדבר עם הAI";
-const DEFAULT_AWAY_MESSAGE = "זהו מענה אוטומטי. נציג אנושי לא זמין כרגע ויחזור אליכם בהקדם עם מענה נוסף. בינתיים אפשר להמשיך לדבר איתי, ואשתדל לעזור ככל שאוכל.";
+const DEFAULT_AWAY_MESSAGE_HE = "זהו מענה אוטומטי. נציג אנושי לא זמין כרגע ויחזור אליכם בהקדם עם מענה נוסף. בינתיים אפשר להמשיך לדבר איתי, ואשתדל לעזור ככל שאוכל.";
+const DEFAULT_AWAY_MESSAGE_EN = "This is an automated response. A human representative is not available right now and will get back to you soon with another response. In the meantime, you can keep talking to me and I’ll do my best to help.";
 
 const DEFAULT_SETTINGS = {
   enabled: false,
   autoSend: false,
   awayMode: false,
-  awayMessage: DEFAULT_AWAY_MESSAGE,
+  awayMessageHebrew: DEFAULT_AWAY_MESSAGE_HE,
+  awayMessageEnglish: DEFAULT_AWAY_MESSAGE_EN,
   apiKey: "",
   model: "gemini-3.8-flash",
   fallbackModel: "gemini-3.5-flash-lite",
@@ -165,8 +167,13 @@ async function generateReply({ settings, chatName, messages }) {
 
 function appendReplyFooter(reply, settings) {
   const clean = String(reply || "").trim();
+  const isHebrew = /[\u0590-\u05FF]/.test(clean);
   const footer = settings?.awayMode
-    ? String(settings.awayMessage || DEFAULT_AWAY_MESSAGE).trim()
+    ? String(
+        isHebrew
+          ? (settings.awayMessageHebrew || DEFAULT_AWAY_MESSAGE_HE)
+          : (settings.awayMessageEnglish || DEFAULT_AWAY_MESSAGE_EN)
+      ).trim()
     : AUTO_REPLY_FOOTER;
 
   if (!clean) return footer;
