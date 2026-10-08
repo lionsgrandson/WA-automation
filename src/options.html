@@ -33,6 +33,11 @@
         <input id="skipGroups" type="checkbox" />
         <span>Skip group chats</span>
       </label>
+
+      <label class="toggle-row">
+        <input id="awayMode" type="checkbox" />
+        <span>Away mode</span>
+      </label>
     </section>
 
     <section class="card">
@@ -108,6 +113,12 @@
         Conversation messages sent to Gemini
         <input id="maxConversationMessages" type="number" min="2" max="30" />
       </label>
+
+      <label>
+        Away message
+        <textarea id="awayMessage" rows="4" placeholder="Message appended after the AI reply while Away mode is enabled."></textarea>
+      </label>
+      <p class="muted">When Away mode is enabled, this replaces the normal automatic-response footer.</p>
     </section>
 
     <footer class="savebar">
