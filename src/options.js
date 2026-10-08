@@ -15,7 +15,8 @@ const ids = [
   "tone",
   "minReplyIntervalSec",
   "maxConversationMessages",
-  "awayMessage"
+  "awayMessageHebrew",
+  "awayMessageEnglish"
 ];
 
 document.addEventListener("DOMContentLoaded", init);
