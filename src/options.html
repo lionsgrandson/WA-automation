@@ -26,7 +26,7 @@
 
       <label class="toggle-row">
         <input id="autoSend" type="checkbox" />
-        <span>Automatically send confident replies</span>
+        <span>Automatically send replies</span>
       </label>
 
       <label class="toggle-row">
@@ -115,10 +115,14 @@
       </label>
 
       <label>
-        Away message
-        <textarea id="awayMessage" rows="4" placeholder="Message appended after the AI reply while Away mode is enabled."></textarea>
+        Away message — Hebrew
+        <textarea id="awayMessageHebrew" rows="4" placeholder="Hebrew away message appended after the AI reply."></textarea>
       </label>
-      <p class="muted">When Away mode is enabled, this replaces the normal automatic-response footer.</p>
+      <label>
+        Away message — English
+        <textarea id="awayMessageEnglish" rows="4" placeholder="English away message appended after the AI reply."></textarea>
+      </label>
+      <p class="muted">When Away mode is enabled, the extension chooses the matching footer language automatically and replaces the normal automatic-response footer.</p>
     </section>
 
     <footer class="savebar">
