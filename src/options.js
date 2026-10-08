@@ -1,6 +1,7 @@
 const ids = [
   "enabled",
   "autoSend",
+  "awayMode",
   "skipGroups",
   "apiKey",
   "model",
@@ -13,7 +14,8 @@ const ids = [
   "replyLanguage",
   "tone",
   "minReplyIntervalSec",
-  "maxConversationMessages"
+  "maxConversationMessages",
+  "awayMessage"
 ];
 
 document.addEventListener("DOMContentLoaded", init);
