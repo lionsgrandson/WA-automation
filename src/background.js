@@ -1,8 +1,11 @@
 const AUTO_REPLY_FOOTER = "זהו מענה אוטומטי נציג אנושי יענה לכם עוד מעט לעכשיו לרוב השאלות אפשר לדבר עם הAI";
+const DEFAULT_AWAY_MESSAGE = "זהו מענה אוטומטי. נציג אנושי לא זמין כרגע ויחזור אליכם בהקדם עם מענה נוסף. בינתיים אפשר להמשיך לדבר איתי, ואשתדל לעזור ככל שאוכל.";
 
 const DEFAULT_SETTINGS = {
   enabled: false,
   autoSend: false,
+  awayMode: false,
+  awayMessage: DEFAULT_AWAY_MESSAGE,
   apiKey: "",
   model: "gemini-3.8-flash",
   fallbackModel: "gemini-3.5-flash-lite",
@@ -148,7 +151,7 @@ async function generateReply({ settings, chatName, messages }) {
       });
       return {
         ...result,
-        reply: appendAutoReplyFooter(result.reply),
+        reply: appendReplyFooter(result.reply, settings),
         model
       };
     } catch (error) {
@@ -160,11 +163,15 @@ async function generateReply({ settings, chatName, messages }) {
   throw lastError || new Error("Gemini request failed.");
 }
 
-function appendAutoReplyFooter(reply) {
+function appendReplyFooter(reply, settings) {
   const clean = String(reply || "").trim();
-  if (!clean) return AUTO_REPLY_FOOTER;
-  if (clean.endsWith(AUTO_REPLY_FOOTER)) return clean;
-  return `${clean}\n\n${AUTO_REPLY_FOOTER}`;
+  const footer = settings?.awayMode
+    ? String(settings.awayMessage || DEFAULT_AWAY_MESSAGE).trim()
+    : AUTO_REPLY_FOOTER;
+
+  if (!clean) return footer;
+  if (!footer || clean.endsWith(footer)) return clean;
+  return `${clean}\n\n${footer}`;
 }
 
 async function callGemini({ apiKey, model, systemInstruction, userPrompt }) {
