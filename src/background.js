@@ -1,6 +1,7 @@
 const DEFAULT_SETTINGS = {
   enabled: false,
   autoSend: false,
+  awayMode: false,
   apiKey: "",
   model: "gemini-3.8-flash",
   fallbackModel: "gemini-3.5-flash-lite",
@@ -149,7 +150,11 @@ async function generateReply({ settings, chatName, messages, latestInboundMessag
         systemInstruction,
         userPrompt
       });
-      return { ...result, model };
+      const footer = responseLanguage === "Hebrew"
+        ? "זהו מענה אוטומטי. נציג אנושי לא זמין כרגע ויחזור אליכם בהקדם עם מענה נוסף. בינתיים אפשר להמשיך לדבר איתי, ואשתדל לעזור ככל שאוכל."
+        : "This is an automated response. A human representative is currently unavailable and will get back to you as soon as possible. In the meantime, you can continue talking with me and I'll do my best to help.";
+      const reply = settings.awayMode && !result.reply.includes(footer) ? result.reply + "\n\n" + footer : result.reply;
+      return { ...result, reply, model };
     } catch (error) {
       lastError = error;
       if (![429, 500, 502, 503, 504].includes(error.status)) throw error;
