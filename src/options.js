@@ -1,6 +1,7 @@
 const ids = [
   "enabled",
   "autoSend",
+  "awayMode",
   "skipGroups",
   "apiKey",
   "model",
