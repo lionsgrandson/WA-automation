@@ -142,16 +142,21 @@
 
   async function processConversation(conversation, key) {
     state.processing = true;
-    state.lastProcessedByChat.set(conversation.chatName, key);
 
     try {
       const lastReplyAt = state.lastReplyAtByChat.get(conversation.chatName) || 0;
       const minimumMs = Math.max(5, Number(state.settings.minReplyIntervalSec) || 20) * 1000;
       if (Date.now() - lastReplyAt < minimumMs) return;
 
+      await sleep(500);
+      const current = readConversation();
+      if (!current || current.chatName !== conversation.chatName || !current.latestInbound) throw new Error("Cannot read latest inbound message.");
+      if (messageKey(current.chatName, current.latestInbound) !== key) return;
+      conversation = current;
       const response = await chrome.runtime.sendMessage({
         type: "GENERATE_REPLY",
         chatName: conversation.chatName,
+        latestInboundMessage: conversation.latestInbound.text,
         messages: conversation.messages.slice(-Math.max(2, Number(state.settings.maxConversationMessages) || 12))
       });
 
@@ -159,6 +164,7 @@
       const result = response.result;
       if (!result?.reply) throw new Error("Gemini returned an empty reply.");
 
+      if (/^\s*\{/.test(result.reply)) throw new Error("Raw JSON reply blocked.");
       const inserted = insertReply(result.reply);
       if (!inserted) throw new Error("Could not find the WhatsApp message composer.");
 
@@ -170,6 +176,7 @@
         state.lastReplyAtByChat.set(conversation.chatName, Date.now());
       }
 
+      state.lastProcessedByChat.set(conversation.chatName, key);
       log(
         shouldSend ? "sent" : "drafted",
         shouldSend
@@ -229,8 +236,8 @@
   }
 
   function getMessageText(node) {
-    const preferred = node.querySelector?.(".selectable-text, [data-testid='msg-text']");
-    let text = preferred?.innerText || preferred?.textContent || "";
+    const textNodes = [...node.querySelectorAll(".selectable-text, [data-testid='msg-text']")];
+    let text = textNodes.map(el => el.innerText || el.textContent || "").filter(Boolean).join(" ");
 
     if (!text.trim()) {
       const copyable = node.querySelector?.("[data-pre-plain-text]");
