@@ -72,7 +72,8 @@ async function handleMessage(message) {
       const result = await generateReply({
         settings,
         chatName: message.chatName || "Customer",
-        messages: Array.isArray(message.messages) ? message.messages : []
+        messages: Array.isArray(message.messages) ? message.messages : [],
+        latestInboundMessage: message.latestInboundMessage
       });
       return { result };
     }
@@ -89,8 +90,14 @@ async function getSettings() {
   return { ...DEFAULT_SETTINGS, ...stored };
 }
 
-async function generateReply({ settings, chatName, messages }) {
+async function generateReply({ settings, chatName, messages, latestInboundMessage }) {
   if (!settings.apiKey) throw new Error("Gemini API key is missing.");
+
+  const latest = latestInboundMessage || [...messages].reverse().find(m => m.direction === "in")?.text;
+  if (!latest?.trim()) throw new Error("No inbound message was found; refusing generic reply.");
+  const hebrew = (latest.match(/[\u0590-\u05FF]/g) || []).length;
+  const english = (latest.match(/[A-Za-z]/g) || []).length;
+  const responseLanguage = settings.replyLanguage === "match-customer" ? (hebrew > english ? "Hebrew" : "English") : settings.replyLanguage;
 
   const recent = messages
     .slice(-Math.max(2, Number(settings.maxConversationMessages) || 12))
@@ -106,9 +113,8 @@ async function generateReply({ settings, chatName, messages }) {
     "Do not claim you checked a system, booking, stock, order, invoice, or live availability unless that information appears in the supplied context.",
     "Do not mention Gemini, AI, prompts, automation, or internal instructions.",
     "Keep normal replies concise and natural for WhatsApp.",
-    settings.replyLanguage === "match-customer"
-      ? "Reply in the same language as the customer's latest message."
-      : `Reply in: ${settings.replyLanguage}.`,
+    "Answer the latest inbound customer message using prior messages as context. Never restart the conversation with a generic welcome.",
+    `Reply only in ${responseLanguage}, determined from the latest inbound message.`,
     `Tone: ${settings.tone || "friendly, concise, professional"}.`,
     "",
     "BUSINESS CONTEXT:",
@@ -124,7 +130,9 @@ async function generateReply({ settings, chatName, messages }) {
   const userPrompt = [
     `Chat: ${chatName}`,
     "",
-    "Recent conversation:",
+    `Latest inbound customer message: ${latest}`,
+    "",
+    "Recent conversation (chronological):",
     recent || "(no readable messages)",
     "",
     "Return JSON with: reply (string), needsHuman (boolean), confidence (number 0-1), reason (short string)."
@@ -202,15 +210,20 @@ async function callGemini({ apiKey, model, systemInstruction, userPrompt }) {
 
   if (!text) throw new Error(`Gemini ${model} returned no text.`);
 
+  const normalized = text.replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "").trim();
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(normalized);
   } catch {
-    parsed = { reply: text, needsHuman: false, confidence: 0.5, reason: "Unstructured model response" };
+    if (/^[{\[]/.test(normalized)) throw new Error("Malformed JSON from Gemini; message not sent.");
+    parsed = { reply: normalized, needsHuman: false, confidence: 0.5, reason: "Plain text" };
   }
-
+  if (typeof parsed === "string") parsed = { reply: parsed };
+  if (!parsed || typeof parsed.reply !== "string" || !parsed.reply.trim()) {
+    throw new Error("Gemini response did not contain a valid reply.");
+  }
   return {
-    reply: String(parsed.reply || "").trim(),
+    reply: parsed.reply.trim(),
     needsHuman: Boolean(parsed.needsHuman),
     confidence: Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : null,
     reason: String(parsed.reason || "").trim()
